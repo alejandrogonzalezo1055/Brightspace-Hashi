@@ -11,14 +11,6 @@ from common.settings import get_settings
 ProductVersion = Annotated[float | None, Path()]
 
 
-def require_internal_key(authorization: Annotated[str | None, Header()] = None):
-    ok = False
-    if authorization and authorization.startswith("Bearer "):
-        ok = secrets.compare_digest(authorization[7:], get_settings().python_api_key.get_secret_value())
-    if not ok:
-        raise HTTPException(status_code=401)
-
-
 class ProductVersionValidator():
     def __init__(self, product: str):
         self.product = product
@@ -69,6 +61,19 @@ class ResponseCookies(BaseModel):
     access_token: str | None = None
     refresh_token: str | None = None
     response_time: str = None
+
+
+class HttpxRequest(BaseModel):
+    url: str = None
+    json: dict = None
+    text: str = None
+
+def require_internal_key(authorization: Annotated[str | None, Header()] = None):
+    ok = False
+    if authorization and authorization.startswith("Bearer "):
+        ok = secrets.compare_digest(authorization[7:], get_settings().python_api_key.get_secret_value())
+    if not ok:
+        raise HTTPException(status_code=401)
 
 
 def add_cookies(response: Response, cookies_data: list[dict]) -> Response:

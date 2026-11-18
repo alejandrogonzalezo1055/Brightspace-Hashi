@@ -15,6 +15,6 @@ cookie = Annotated[str | None, Cookie()]
 
 # EL OrgUnitID DEBERIA SER ALGO GLOBAL DE MI APP, PUES SOLO SE CONCENTRARA EN ESE CURSO?
 # DEBERIA MAS BIEN HACRLO PARA CUALQUIER CURSO?
-@router.get("/{OrgUnitID}/dropbox")
+@router.get("/{OrgUnitID}/dropbox/folders/")
 def a():
     ...

@@ -23,7 +23,7 @@ def health(service: InternalService) -> Response:
 
 @router.put("/users/{external_id}")
 def put_user(service: InternalService, external_id: id, body: req_body) -> Response:
-    return service.put_user(external_id, body)
+    return service.put_user(external_id=external_id, body=body)
 
 
 @router.put("/users/{external_id}/enrollments")

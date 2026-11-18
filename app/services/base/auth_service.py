@@ -1,10 +1,10 @@
-from fastapi import HTTPException, status, Query, Cookie, Request
-from fastapi.responses import Response, JSONResponse
-
+from fastapi import HTTPException, status, Query, Cookie
+from fastapi.responses import Response
 from functools import lru_cache
 from typing import Annotated
 from urllib.parse import urlencode
 from datetime import datetime
+from http.cookies import SimpleCookie
 import secrets
 import httpx
 
@@ -13,6 +13,7 @@ from common.settings import get_settings, TOKEN_LIFE
 from common.schemas import CallbackRequest, ResponseCookies
 from common.schemas import add_cookies, delete_cookies, create_redirect_response, create_response
 from common.errors import get_logger
+from app.services.base import internal_service
 
 
 callback_request = Annotated[CallbackRequest | None, Query()]
@@ -27,6 +28,7 @@ time_format = "%Y-%m-%d %H:%M:%S"
 class OAuthService:
     def __init__(self):
         self.settings = get_settings()
+        self.internal_service = internal_service.get_service()
         self.logger = get_logger().logger
         self.token_options = {
             "access": "authorization_code",
@@ -35,21 +37,6 @@ class OAuthService:
         self.httpx_client = httpx.Client()
         self.async_httpx_client = httpx.AsyncClient()
         self.callback_url = "https://localhost:9000/auth/callback"
-
-
-    def auth_url(self, redirect_uri: str) -> tuple[str, str]:
-        url = self.settings.get_oauth_url()
-        state = secrets.token_urlsafe(24)
-
-        params = {
-            "response_type": "code",
-            "client_id": self.settings.app_id,
-            "redirect_uri": redirect_uri,
-            "scope": self.settings.app_scope,
-            "state": state
-        }
-
-        return f"{url}?{urlencode(params)}", state
 
 
     def login_url(self) -> Response:
@@ -70,6 +57,21 @@ class OAuthService:
         }
 
         return create_redirect_response(response_data)
+
+
+    def auth_url(self, redirect_uri: str) -> tuple[str, str]:
+        url = self.settings.get_oauth_url()
+        state = secrets.token_urlsafe(24)
+
+        params = {
+            "response_type": "code",
+            "client_id": self.settings.app_id,
+            "redirect_uri": redirect_uri,
+            "scope": self.settings.app_scope,
+            "state": state
+        }
+
+        return f"{url}?{urlencode(params)}", state
 
 
     def logout_url(self) -> Response:
@@ -123,6 +125,17 @@ class OAuthService:
             else:
                 response = self.access_token(request.code, False)
 
+                if response.status_code != 302 and response.status_code != 502:
+                    raw_rep_cookies = response.headers.getlist("set-cookie")
+
+                    rep_cookies = SimpleCookie()
+                    for cookie in raw_rep_cookies:
+                        rep_cookies.load(cookie)
+
+                    access_token = rep_cookies.get("access_token").value
+
+                    self.internal_service.edutrace_user(access_token)
+
         return response
 
 
@@ -139,14 +152,7 @@ class OAuthService:
                 detail="El token que quiere obtener no existe"
             )
 
-        response = JSONResponse(content=None)
-        if req_cookies.auth_code or req_cookies.refresh_token:
-            match option.get("token"):
-                case "access":
-                    response = self.access_token(req_cookies.auth_code, option.get("manual"))
-                case "refresh":
-                    response = self.refresh_token(req_cookies.refresh_token, option.get("manual"))
-        elif not req_cookies.auth_code:
+        if not req_cookies.auth_code and option.get("token") == "access":
             response_data = {
                 "status_code": status.HTTP_406_NOT_ACCEPTABLE,
                 "content": "La peticion no trae auth_code",
@@ -154,7 +160,8 @@ class OAuthService:
             }
 
             return create_response(response_data)
-        elif not req_cookies.refresh_token:
+
+        if not req_cookies.refresh_token and option.get("token") == "refresh":
             response_data = {
                 "status_code": status.HTTP_406_NOT_ACCEPTABLE,
                 "content": "La peticion no trae refresh_token",
@@ -163,30 +170,17 @@ class OAuthService:
 
             return create_response(response_data)
 
-        return response
+        match option.get("token"):
+            case "access":
+                return self.access_token(req_cookies.auth_code, option.get("manual"))
+            case "refresh":
+                return self.refresh_token(req_cookies.refresh_token, option.get("manual"))
 
 
     def token_req(self, option: str, auth_code: cookie = None, refresh_token: cookie = None) -> token_rep:
         url = self.settings.get_token_url()
 
         match option:
-            case "refresh":
-                response = self.httpx_client.post(
-                    url=url,
-                    auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
-                    data={
-                        "grant_type": self.token_options["refresh"],
-                        "refresh_token": refresh_token
-                    }
-                )
-                self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
-
-                if response.is_success:
-                    return response.json(), response.status_code, datetime.now().isoformat()
-                else:
-                    settings.brightspace_call = False
-
-                    return settings.brightspace_call
             case "access":
                 response = self.httpx_client.post(
                     url=url,
@@ -199,7 +193,24 @@ class OAuthService:
                 )
                 self.logger.info("TokenReq-Access. Se envio una peticion post al cliente d2l.")
 
-                if response.is_success:
+                if response.is_success and "application/json" in response.headers.get("content-type", ""):
+                    return response.json(), response.status_code, datetime.now().isoformat()
+                else:
+                    settings.brightspace_call = False
+
+                    return settings.brightspace_call
+            case "refresh":
+                response = self.httpx_client.post(
+                    url=url,
+                    auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
+                    data={
+                        "grant_type": self.token_options["refresh"],
+                        "refresh_token": refresh_token
+                    }
+                )
+                self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
+
+                if response.is_success and "application/json" in response.headers.get("content-type", ""):
                     return response.json(), response.status_code, datetime.now().isoformat()
                 else:
                     settings.brightspace_call = False
@@ -240,7 +251,7 @@ class OAuthService:
                 response_data = {
                     "status_code": status.HTTP_202_ACCEPTED,
                     "content": {
-                        "message": "Se obtuvo el codigo de acceso, a continuacion unos detalles.",
+                        "message": "Se obtuvo el token de acceso, a continuacion unos detalles.",
                         "token_type": json_response["token_type"],
                         "expires_in": json_response["expires_in"],
                         "scope": json_response["scope"]
@@ -314,7 +325,7 @@ class OAuthService:
                 response_data = {
                     "status_code": status.HTTP_202_ACCEPTED,
                     "content": {
-                        "message": "Se obtuvo el codigo de acceso, a continuacion unos detalles.",
+                        "message": "Se obtuvo el token de refresco, a continuacion unos detalles.",
                         "token_type": json_response["token_type"],
                         "expires_in": json_response["expires_in"],
                         "scope": json_response["scope"]
@@ -408,7 +419,7 @@ class OAuthService:
         )
         self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
 
-        if response.is_success:
+        if response.is_success and "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
         else:
             settings.brightspace_call = False

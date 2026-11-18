@@ -1,14 +1,14 @@
 import time
 from collections import defaultdict
-
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response, status
 from datetime import datetime
+from http.cookies import SimpleCookie
 
 from common.errors import Logger
 from common.settings import TOKEN_LIFE
 from common.schemas import delete_cookies, create_response
-from app.services.base.oauth_service import get_service
+from app.services.base.auth_service import get_service
 
 
 LIM_INTENTOS_LOGIN = 8
@@ -29,23 +29,27 @@ class Middleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         self.limpiar_counter()
 
-        req_cookies = request.cookies
-
         login_limit_resp = self.login_counter(request.client.host, request.url.path)
         if login_limit_resp:
             return delete_cookies(login_limit_resp)
 
         response = await call_next(request)
 
-        if "/auth/" not in request.url.path and "response_time" in req_cookies.keys():
-            response_time = req_cookies["response_time"]
+        raw_rep_cookies = response.headers.getlist("set-cookie")
+
+        rep_cookies = SimpleCookie()
+        for cookie in raw_rep_cookies:
+            rep_cookies.load(cookie)
+
+        if "/auth/" not in request.url.path and "response_time" in rep_cookies:
+            response_time = rep_cookies["response_time"].value
 
             initial_response_time = datetime.fromisoformat(response_time)
             time_diff = datetime.now() - initial_response_time
             lim_inf = self.token_life - self.token_life*15/100
 
-            if lim_inf <= time_diff.total_seconds() < self.token_life and "refresh_token" in req_cookies.keys():
-                response = await self.oauth_service.auto_obtain_tokens({"token":"refresh"}, response=response, refresh_token=req_cookies["refresh_token"])
+            if lim_inf <= time_diff.total_seconds() < self.token_life and "refresh_token" in rep_cookies:
+                response = await self.oauth_service.auto_obtain_tokens({"token":"refresh"}, response=response, refresh_token=rep_cookies["refresh_token"].value)
             elif time_diff.seconds > self.token_life:
                 response = await self.oauth_service.auto_obtain_tokens({"token":"access"})
 
