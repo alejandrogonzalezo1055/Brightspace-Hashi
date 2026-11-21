@@ -1,3 +1,5 @@
+from http.cookies import SimpleCookie
+
 from fastapi import Path, HTTPException, status, Header
 from fastapi.responses import Response, RedirectResponse, JSONResponse
 from pydantic import BaseModel, field_validator
@@ -65,8 +67,8 @@ class ResponseCookies(BaseModel):
 
 class HttpxRequest(BaseModel):
     url: str = None
-    json: dict = None
-    text: str = None
+    json: dict | None = None
+    #text: str = None
 
 def require_internal_key(authorization: Annotated[str | None, Header()] = None):
     ok = False
@@ -109,10 +111,12 @@ def create_redirect_response(data: dict | None = None) -> Response:
 def create_response(data: dict | None = None) -> Response:
     response = Response()
 
-    if type(data["content"]) is str:
+    if isinstance(data["content"], str):
         response = Response(content=data["content"], status_code=data["status_code"])
-    elif type(data["content"]) is dict:
+    elif isinstance(data["content"], (dict, list)):
         response = JSONResponse(content=data["content"], status_code=data["status_code"])
+    else:
+        response = Response(media_type="text/plain", content="El tipo de la respuesta que quiere crear no se reconoce", status_code=status.HTTP_418_IM_A_TEAPOT)
 
     if data["cookies"] is not None:
         response = add_cookies(response, data["cookies"])

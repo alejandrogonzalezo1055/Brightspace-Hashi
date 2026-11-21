@@ -134,9 +134,25 @@ class OAuthService:
 
                     access_token = rep_cookies.get("access_token").value
 
-                    self.internal_service.edutrace_user(access_token)
+                    edutrace_ticket = self.internal_service.edutrace_user(access_token)
 
-        return response
+                    if isinstance(edutrace_ticket, Response):
+                        return edutrace_ticket
+                    else:
+                        response_data = {
+                            "url": f"{self.settings.go_base_url}/api/auth/session?ticket={edutrace_ticket}",
+                            "status_code": status.HTTP_302_FOUND,
+                            "cookies": None
+                        }
+
+                        redirect_response = create_redirect_response(response_data)
+
+                        for cookie in raw_rep_cookies:
+                            redirect_response.headers.append("set-cookie", cookie)
+
+                        return redirect_response
+                else:
+                    return response
 
 
     def obtain_tokens(self, req_cookies: cookies, option: dict[str, str | bool]) -> Response:

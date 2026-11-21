@@ -1,16 +1,18 @@
 from fastapi import Cookie, Path, status
 from fastapi.responses import Response
 from functools import lru_cache
+from itertools import chain
 from typing import Annotated
+from datetime import datetime
 import httpx
 
-from common.settings import get_settings
+from common.settings import get_settings, TOKEN_LIFE
 from common.schemas import ResponseCookies, ProductVersion, create_response
 
 
 cookies = Annotated[ResponseCookies | None, Cookie()]
 cookie = Annotated[str | None, Cookie()]
-httpx_resp = Annotated[tuple[dict,int] | tuple[str,int] | None, "Parametro Necesario"]
+httpx_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | None, "Parametro Necesario"]
 profile_id = Annotated[str, Path()]
 
 
@@ -33,51 +35,87 @@ class LPService:
                 )
 
         if response.is_success and "application/json" in response.headers.get("content-type", ""):
-            return response.json(), response.status_code
-        elif response.is_success and "text/plain" in response.headers.get("content-type", ""):
-            return response.text, response.status_code
+            return response.json(), response.status_code, datetime.now().isoformat()
         else:
             return None
 
 
     def whoami(self, access_token: cookie) -> Response:
         url = f"{self.url}/users/whoami"
-        json_or_txt_response, resp_status = self.httpx_requests(req="get", url=url, access_token=access_token)
+        response = self.httpx_requests(req="get", url=url, access_token=access_token)
 
-        response_data = {
-            "status_code": resp_status,
-            "content": json_or_txt_response,
-            "cookies": None
-        }
+        if response is not None:
+            json_response, resp_status, response_time = response
+            response_data = {
+                "status_code": resp_status,
+                "content": json_response,
+                "cookies": [
+                    {
+                        "key": "response_time",
+                        "value": response_time,
+                        "httponly": True,
+                        "samesite": "lax",
+                        "max_age": TOKEN_LIFE
+                    }
+                ]
+            }
 
-        return create_response(response_data)
+            return create_response(response_data)
+        else:
+            response_data = {
+                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "content": "La respuesta de Brightspace fue 'None'",
+                "cookies": None
+            }
+
+            return create_response(response_data)
 
 
-    # NO TENGO PERMISOS
-    def my_profile(self, ProfileIdentifier: profile_id, access_token: cookie) -> Response:
-        url = f"{self.url}/profile/{ProfileIdentifier}"
-        json_response, resp_status = self.httpx_requests(req="get", url=url, access_token=access_token)
+    def myenrollments(self, access_token: cookie, bookmark: str | None = None, paginas: list | None = None) -> Response:
+        if bookmark is None:
+            url = f"{self.url}/enrollments/myenrollments/"
+            paginas = []
+        else:
+            url = f"{self.url}/enrollments/myenrollments/?bookmark={bookmark}"
 
-        response_data = {
-            "status_code": resp_status,
-            "content": json_response,
-            "cookies": None
-        }
+        response = self.httpx_requests(req="get", url=url, access_token=access_token)
 
-        return create_response(response_data)
+        if response is not None:
+            json_response, resp_status, response_time = response
 
+            more_pages = json_response["PagingInfo"]["HasMoreItems"]
+            bookmark = json_response["PagingInfo"]["Bookmark"]
 
-    def myenrollments(self, access_token: cookie) -> Response:
-        url = f"{self.url}/enrollments/myenrollments/"
-        json_response, resp_status = self.httpx_requests(req="get", url=url, access_token=access_token)
+            paginas.append(json_response["Items"])
 
-        response_data = {
-            "status_code": resp_status,
-            "content": json_response,
-            "cookies": None
-        }
+            if more_pages:
+                self.myenrollments(access_token=access_token, bookmark=bookmark, paginas=paginas)
 
-        return create_response(response_data)
+            flat_pages = list(chain.from_iterable(paginas))
+
+            response_data = {
+                "status_code": resp_status,
+                "content": {"Items": flat_pages},
+                "cookies": [
+                    {
+                        "key": "response_time",
+                        "value": response_time,
+                        "httponly": True,
+                        "samesite": "lax",
+                        "max_age": TOKEN_LIFE
+                    }
+                ]
+            }
+
+            return create_response(response_data)
+        else:
+            response_data = {
+                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "content": "La respuesta de Brightspace fue 'None'",
+                "cookies": None
+            }
+
+            return create_response(response_data)
 
 
 @lru_cache()

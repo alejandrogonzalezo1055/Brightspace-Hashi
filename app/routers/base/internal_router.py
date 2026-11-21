@@ -28,7 +28,7 @@ def put_user(service: InternalService, external_id: id, body: req_body) -> Respo
 
 @router.put("/users/{external_id}/enrollments")
 def put_enrollments(service: InternalService, external_id: id, body: req_body) -> Response:
-    return service.put_enrollments(external_id, body)
+    return service.put_enrollments(external_id=external_id, body=body)
 
 
 @router.put("/courses/{course_external_id}/assignments")
@@ -36,6 +36,6 @@ def put_assigment(service: InternalService, course_external_id: id, body: req_bo
     return service.put_assigment(course_external_id, body)
 
 
-@router.put("/session-tickets")
+@router.post("/session-tickets")
 def create_tickets(service: InternalService, external_id) -> Response:
     return service.create_ticket(external_id)

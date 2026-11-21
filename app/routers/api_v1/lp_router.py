@@ -19,11 +19,6 @@ profile_id = Annotated[str, Path()]
 def whoami(service: LPService, access_token: cookie) -> Response:
     return service.whoami(access_token)
 
-# NO TENGO PERMISOS
-@router.get("/profiles/{ProfileIdentifier}")
-def my_profile(service: LPService, ProfileIdentifier: profile_id, access_token: cookie) -> Response:
-    return service.my_profile(ProfileIdentifier, access_token)
-
 @router.get("/enrollments/myenrollments/")
 def my_enrollments(service: LPService, access_token: cookie) -> Response:
     return service.myenrollments(access_token)
