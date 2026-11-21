@@ -19,7 +19,7 @@ from app.services.base import internal_service
 callback_request = Annotated[CallbackRequest | None, Query()]
 cookies = Annotated[ResponseCookies | None, Cookie()]
 cookie = Annotated[str | None, Cookie()]
-token_rep = Annotated[tuple[dict,int,str] | None | bool, "Parametro Necesario"]
+token_rep = Annotated[tuple[dict,int,str] | Response | None | bool, "Parametro Necesario"]
 
 
 time_format = "%Y-%m-%d %H:%M:%S"
@@ -150,7 +150,7 @@ class OAuthService:
                         for cookie in raw_rep_cookies:
                             redirect_response.headers.append("set-cookie", cookie)
 
-                        return redirect_response
+                        return response
                 else:
                     return response
 
@@ -196,42 +196,51 @@ class OAuthService:
     def token_req(self, option: str, auth_code: cookie = None, refresh_token: cookie = None) -> token_rep:
         url = self.settings.get_token_url()
 
-        match option:
-            case "access":
-                response = self.httpx_client.post(
-                    url=url,
-                    auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
-                    data={
-                        "grant_type": self.token_options["access"],
-                        "code": auth_code,
-                        "redirect_uri": self.callback_url
-                    }
-                )
-                self.logger.info("TokenReq-Access. Se envio una peticion post al cliente d2l.")
+        try:
+            match option:
+                case "access":
+                    response = self.httpx_client.post(
+                        url=url,
+                        auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
+                        data={
+                            "grant_type": self.token_options["access"],
+                            "code": auth_code,
+                            "redirect_uri": self.callback_url
+                        }
+                    )
+                    self.logger.info("TokenReq-Access. Se envio una peticion post al cliente d2l.")
 
-                if response.is_success and "application/json" in response.headers.get("content-type", ""):
-                    return response.json(), response.status_code, datetime.now().isoformat()
-                else:
-                    settings.brightspace_call = False
+                    if response.is_success and "application/json" in response.headers.get("content-type", ""):
+                        return response.json(), response.status_code, datetime.now().isoformat()
+                    else:
+                        settings.brightspace_call = False
 
-                    return settings.brightspace_call
-            case "refresh":
-                response = self.httpx_client.post(
-                    url=url,
-                    auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
-                    data={
-                        "grant_type": self.token_options["refresh"],
-                        "refresh_token": refresh_token
-                    }
-                )
-                self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
+                        return settings.brightspace_call
+                case "refresh":
+                    response = self.httpx_client.post(
+                        url=url,
+                        auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
+                        data={
+                            "grant_type": self.token_options["refresh"],
+                            "refresh_token": refresh_token
+                        }
+                    )
+                    self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
 
-                if response.is_success and "application/json" in response.headers.get("content-type", ""):
-                    return response.json(), response.status_code, datetime.now().isoformat()
-                else:
-                    settings.brightspace_call = False
+                    if response.is_success and "application/json" in response.headers.get("content-type", ""):
+                        return response.json(), response.status_code, datetime.now().isoformat()
+                    else:
+                        settings.brightspace_call = False
 
-                    return settings.brightspace_call
+                        return settings.brightspace_call
+        except httpx.ConnectError as e:
+            response_data = {
+                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "content": "Brightspace no responde. " + str(e),
+                "cookies": None
+            }
+
+            return create_response(response_data)
 
         return None
 
@@ -260,6 +269,8 @@ class OAuthService:
                 response = create_response(response_data)
 
             return response
+        elif isinstance(token_reply, Response):
+            return token_reply
         else:
             json_response, resp_status, response_time = token_reply
 
@@ -334,6 +345,8 @@ class OAuthService:
                 response = create_response(response_data)
 
             return response
+        elif isinstance(token_reply, Response):
+            return token_reply
         else:
             json_response, resp_status, response_time = token_reply
 
@@ -425,14 +438,24 @@ class OAuthService:
     async def auto_token_req(self, refresh_token: cookie = None) -> token_rep:
         url = self.settings.get_token_url()
 
-        response = await self.async_httpx_client.post(
-            url=url,
-            auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
-            data={
-                "grant_type": self.token_options["refresh"],
-                "refresh_token": refresh_token
+        try:
+            response = await self.async_httpx_client.post(
+                url=url,
+                auth=(self.settings.app_id, self.settings.app_secret.get_secret_value()),
+                data={
+                    "grant_type": self.token_options["refresh"],
+                    "refresh_token": refresh_token
+                }
+            )
+        except httpx.ConnectError as e:
+            response_data = {
+                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "content": "Brightspace no responde. " + str(e),
+                "cookies": None
             }
-        )
+
+            return create_response(response_data)
+
         self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
 
         if response.is_success and "application/json" in response.headers.get("content-type", ""):
@@ -467,6 +490,8 @@ class OAuthService:
                 response = create_response(response_data)
 
             return response
+        elif isinstance(token_reply, Response):
+            return token_reply
         else:
             json_response, resp_status, response_time = token_reply
 

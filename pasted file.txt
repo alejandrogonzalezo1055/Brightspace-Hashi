@@ -1,0 +1,36 @@
+Buenos días,
+Soy [tu nombre], estudiante de Ingeniería de Sistemas, y estoy desarrollando la integración de EduTrace con Brightspace para el proyecto de
+Innovación en TI [asignatura / docente a cargo]. Hoy podemos iniciar sesión con OAuth 2.0 y leer nuestro perfil e inscripciones en el entorno de pruebas, pero nos faltan permisos para la parte de talleres, entregas y calificaciones.
+
+La app ya está registrada en Manage Extensibility → OAuth 2.0 [nombre de la app / client ID]. Les pido agregar scopes a esa misma app (no crear
+una nueva), con el redirect_uri ya registrado: https://localhost:9000/auth/callback.
+
+Scopes que tenemos hoy
+users:own_profile:read
+enrollment:own_enrollment:read
+enrollment:orgunit:read
+grades:gradeobjects:read
+grades:gradevalues:read
+Scopes necesarios para el desarrollo actual:
+dropbox:folders:read: listar las carpetas de entrega del curso y consultar entregas y retroalimentación.
+dropbox:folders:write: enviar la entrega de un estudiante y publicar la retroalimentación y la nota del docente.
+users:userdata:read: obtener el correo institucional del usuario al crear su cuenta en EduTrace.
+Scopes que probablemente necesitaremos pronto:
+grades:gradevalues:write: registrar la nota en el libro de calificaciones.
+grades:own_grades:read: que el estudiante consulte su propia nota.
+users:profile:read: consultar el perfil de los miembros del curso.
+orgunits:course:read: leer los datos del curso (nombre, fechas).
+Opcionales (solo lectura), por si ampliamos la integración más adelante:
+content:modules:read, content:topics:read, discussions:forums:read, discussions:topics:read, quizzing:quizzes:read, rubrics:objects:read,
+calendar:events:read. Si prefieren no concederlos ahora, no hay problema; los pediríamos cuando haga falta.
+Solo pedimos acciones de lectura y escritura sobre lo mencionado. No necesitamos eliminar ni crear usuarios, cursos o inscripciones, ni scopes de
+administración ni comodines.
+Además de los scopes, necesitamos lo siguiente para poder probar:
+Permisos de rol. Confirmar que el rol Profesor del curso «Curso EduTrace» (2630_Curso_EduTrace) puede ver las carpetas de entrega y dar
+retroalimentación, y que el rol Estudiante puede entregar. Aunque la app tenga el scope, cada llamada también depende del permiso del rol.
+Un usuario de prueba con rol Estudiante matriculado en ese mismo curso. Con una cuenta de docente no podemos probar las entregas, porque solo
+un estudiante del curso puede entregar.
+Al menos una carpeta de entrega (dropbox) creada en ese curso, con fecha de entrega y apertura vigentes.
+Mientras tanto, seguimos trabajando con los scopes que ya tenemos. Si alguno no puede concederse, les agradecería que me indiquen cuál y el
+motivo para ajustar la integración.
+Quedo atento a su respuesta. Muchas gracias por su ayuda.

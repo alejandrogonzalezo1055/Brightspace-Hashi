@@ -66,7 +66,7 @@ class InternalService:
         except httpx.ConnectError as e:
             response_data = {
                 "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
-                "content": str(e),
+                "content": "Go - EduTrace no responde. " + str(e),
                 "cookies": None
             }
 
@@ -93,7 +93,9 @@ class InternalService:
             if isinstance(go_user_courses, Response):  # error
                 return go_user_courses
             else:
-
+                d2l_body = go_user_courses["content"]["d2l_response"]
+                # debe mandar una peticion de /dropbox/folders por cada orgunit del d2l_body
+                #self.put_assigment(d2l_body)
 
                 ticket_rep = self.create_ticket(user_external_id)
 

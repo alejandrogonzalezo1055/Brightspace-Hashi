@@ -36,7 +36,7 @@ class LPService:
         except httpx.ConnectError as e:
             response_data = {
                 "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
-                "content": str(e),
+                "content": "Brightspace no responde. " + str(e),
                 "cookies": None
             }
 
