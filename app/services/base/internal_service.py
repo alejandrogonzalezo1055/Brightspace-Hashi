@@ -93,6 +93,8 @@ class InternalService:
             if isinstance(go_user_courses, Response):  # error
                 return go_user_courses
             else:
+
+
                 ticket_rep = self.create_ticket(user_external_id)
 
                 if ticket_rep.status_code not in (418, 400, 404, 422, 503):
@@ -111,9 +113,9 @@ class InternalService:
 
             match body_type:
                 case "application/json":
-                    response_body = json.loads(d2l_response.body)
+                    d2l_response_body = json.loads(d2l_response.body)
 
-                    go_resp = self.put_user(response_body)
+                    go_resp = self.put_user(d2l_response_body)
                     go_rep_status = go_resp.status_code
 
                     response_data = {"status_code": go_rep_status,"content": {},"cookies": None}
@@ -157,9 +159,9 @@ class InternalService:
 
             match body_type:
                 case "application/json":
-                    response_body = json.loads(d2l_response.body)
+                    d2l_response_body = json.loads(d2l_response.body)
 
-                    go_resp = self.put_enrollments(response_body, external_id)
+                    go_resp = self.put_enrollments(d2l_response_body, external_id)
                     go_rep_status = go_resp.status_code
 
                     response_data = {"status_code": go_rep_status,"content": {},"cookies": None}
@@ -168,7 +170,10 @@ class InternalService:
                         case status.HTTP_200_OK:
                             go_rep_body = json.loads(go_resp.body)
 
-                            response_data["content"] = go_rep_body
+                            response_data["content"] = {
+                                "d2l_response": d2l_response_body,
+                                "go_response": go_rep_body
+                            }
 
                             return response_data
                         case _:

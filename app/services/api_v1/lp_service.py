@@ -12,7 +12,7 @@ from common.schemas import ResponseCookies, ProductVersion, create_response
 
 cookies = Annotated[ResponseCookies | None, Cookie()]
 cookie = Annotated[str | None, Cookie()]
-httpx_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | None, "Parametro Necesario"]
+httpx_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | Response | None, "Parametro Necesario"]
 profile_id = Annotated[str, Path()]
 
 
@@ -23,19 +23,35 @@ class LPService:
         self.httpx_client = httpx.Client()
         self.url = f"{self.settings.get_api_url(1)}/lp/{self.lp_version}"
 
-
     def httpx_requests(self, req: str, url: str, access_token: cookie) -> httpx_resp:
         response = httpx.Response(status_code=status.HTTP_501_NOT_IMPLEMENTED)
 
-        match req:
-            case "get":
-                response = self.httpx_client.get(
-                    url=url,
-                    headers={"Authorization": f"Bearer {access_token}"}
-                )
+        try:
+            match req:
+                case "get":
+                    response = self.httpx_client.get(
+                        url=url,
+                        headers={"Authorization": f"Bearer {access_token}"}
+                    )
+        except httpx.ConnectError as e:
+            response_data = {
+                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "content": str(e),
+                "cookies": None
+            }
+
+            return create_response(response_data)
 
         if response.is_success and "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
+        elif response.status_code in (401, 403):
+            response_data = {
+                "status_code": response.status_code,
+                "content": response.text,
+                "cookies": None
+            }
+
+            return create_response(response_data)
         else:
             return None
 
@@ -61,6 +77,8 @@ class LPService:
             }
 
             return create_response(response_data)
+        elif isinstance(response, Response):
+            return response
         else:
             response_data = {
                 "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -108,6 +126,8 @@ class LPService:
             }
 
             return create_response(response_data)
+        elif isinstance(response, Response):
+            return response
         else:
             response_data = {
                 "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,

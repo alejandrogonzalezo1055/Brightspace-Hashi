@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Cookie
+from fastapi import APIRouter, Depends, Cookie, Response, Path
 from typing import Annotated
 
 from app.services.api_v1.le_service import LEService, get_service
@@ -12,9 +12,9 @@ LPService = Annotated[LEService, Depends(get_service)]
 
 cookies = Annotated[ResponseCookies | None, Cookie()]
 cookie = Annotated[str | None, Cookie()]
+id = Annotated[int, Path()]
 
-# EL OrgUnitID DEBERIA SER ALGO GLOBAL DE MI APP, PUES SOLO SE CONCENTRARA EN ESE CURSO?
-# DEBERIA MAS BIEN HACRLO PARA CUALQUIER CURSO?
-@router.get("/{OrgUnitID}/dropbox/folders/")
-def a():
-    ...
+
+@router.get("/{orgUnitId}/dropbox/folders/")
+def dropbox_folders(service: LPService, access_token: cookie, orgUnitId: id) -> Response:
+    return service.dropbox_folders(access_token, orgUnitId)
