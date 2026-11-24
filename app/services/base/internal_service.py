@@ -20,8 +20,6 @@ edutrace_user_rep = Annotated[Response | dict | str | None, "Parametro Necesario
 req_body = Annotated[dict | None, Body()]
 id = Annotated[int | str, Path()]
 
-TIMEOUT = 10
-
 
 class InternalService:
     def __init__(self):
@@ -117,13 +115,15 @@ class InternalService:
                         if isinstance(go_assigments, Response):
                             return go_assigments
                         else:
-                            for assigment in go_assigments:
-                                assigment_id = assigment["Id"]
+                            folder = go_assigments["content"]["files_needed"]
 
-                                files = assigment["Attachments"]
-                                if files:
-                                    for file in files:
-                                        self.obtain_assigments_files(access_token, orgUnitId=d2l_org["OrgUnit"]["Id"], folderId=assigment_id, fileId=file["FileId"])
+                            for file in folder:
+                                folder_id = file["folder"]
+                                file_id = file["file_id"]
+                                name = file["name"]
+
+                                self.obtain_assigments_files(access_token, orgUnitId=d2l_org["OrgUnit"]["Id"],
+                                                             folderId=folder_id, fileId=file_id, name=name)
 
 
                 ticket_rep = self.create_ticket(user_external_id)
@@ -270,65 +270,34 @@ class InternalService:
             return d2l_response
 
 
-    def obtain_assigments_files(self, access_token: str, orgUnitId: int, folderId: int, fileId: int):
-        d2l_response = self.le_service.get_archivo(access_token=access_token, orgUnitId=orgUnitId, folderId=folderId, fileId=fileId)
+    def obtain_assigments_files(self, access_token: str, orgUnitId: int, folderId: str, fileId: int, name: str):
+        d2l_response = self.le_service.get_archivo(access_token=access_token,orgUnitId=orgUnitId,
+                                                   folderId=int(folderId.removeprefix("d2l:folder:")),fileId=fileId)
 
         if d2l_response.status_code not in (503, 401, 403, 501):
-            body_type = d2l_response.media_type
+            d2l_response_body = d2l_response.body
 
-            match body_type:
-                case "text/plain" | "d2l/unknowntype":
-                    d2l_response_body = d2l_response.body.decode("utf-8")
+            go_resp = self.put_assigment_file(body=d2l_response_body, external_id=f"d2l:ou:{orgUnitId}"
+                                              , folderId=folderId, fileId=fileId
+                                              , name=name)
+            go_rep_status = go_resp.status_code
 
-                    go_resp = self.put_assigment_file(external_id=f"d2l:ou:{orgUnitId}", body=d2l_response_body)
-                    go_rep_status = go_resp.status_code
+            response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
 
-                    response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
+            match go_rep_status:
+                case status.HTTP_200_OK:
+                    go_rep_body = go_resp.body
 
-                    match go_rep_status:
-                        case status.HTTP_200_OK:
-                            go_rep_body = go_resp.body.decode("utf-8")
+                    response_data["content"] = go_rep_body
 
-                            response_data["content"] = go_rep_body
+                    self.logger.info(f"Obtain Assigments Files. Go obtuvo el archivo: '{fileId}'"
+                                     f", del folder: '{folderId}', y organizacion: '{orgUnitId}'")
 
-                            self.logger.info(f"Obtain Assigments Files. Go obtuvo el file: '{fileId}'"
-                                             f", del folder: '{folderId}', y organizacion: '{orgUnitId}'")
-
-                            return response_data
-                        case _:
-                            self.logger.error(f"Obtain User Assigments."
-                                              f"Go no acepto la organizacion: '{orgUnitId}'"
-                                              f", devolvio el codigo: '{go_rep_status}'")
-                case "application/pdf":
-                    d2l_response_body = d2l_response.body
-
-                    go_resp = self.put_assigment_file(external_id=f"d2l:ou:{orgUnitId}", body=d2l_response_body)
-                    go_rep_status = go_resp.status_code
-
-                    response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
-
-                    match go_rep_status:
-                        case status.HTTP_200_OK:
-                            go_rep_body = go_resp.body
-
-                            response_data["content"] = go_rep_body
-
-                            self.logger.info(f"Obtain Assigments Files. Go obtuvo el file: '{fileId}'"
-                                             f", del folder: '{folderId}', y organizacion: '{orgUnitId}'")
-
-                            return response_data
-                        case _:
-                            self.logger.error(f"Obtain User Assigments."
-                                              f"Go no acepto la organizacion: '{orgUnitId}'"
-                                              f", devolvio el codigo: '{go_rep_status}'")
+                    return response_data
                 case _:
-                    response_data = {
-                        "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
-                        "content": "El cuerpo de la respuesta no es valido",
-                        "cookies": None
-                    }
-
-                    return create_response(response_data)
+                    self.logger.error(f"Obtain Assigments Files."
+                                      f"Go no acepto el archivo: '{orgUnitId}'"
+                                      f", devolvio el codigo: '{go_rep_status}'")
         else:
             return d2l_response
 
@@ -481,12 +450,12 @@ class InternalService:
             return create_response(response_data)
 
 
-    def put_assigment_file(self, body: req_body, external_id: id) -> Response:
+    def put_assigment_file(self, body: req_body, external_id: id, folderId: id, fileId: id, name: str) -> Response:
         if body is not None:
-            url = f"{self.go_internal_url}"
+            url = f"{self.go_internal_url}/courses/{external_id}/assignments/{folderId}/files/{fileId}?name={name}"
             go_req_data = HttpxRequest(url=url, req_content=body)
 
-            go_resp = self.go_requests(req="put", req_data=go_req_data)
+            go_resp = self.go_requests(req="put", req_data=go_req_data, file=True)
 
             if isinstance(go_resp, Response):  # error response
                 return go_resp
