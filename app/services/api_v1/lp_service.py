@@ -42,7 +42,7 @@ class LPService:
 
             return create_response(response_data)
 
-        if response.is_success and "application/json" in response.headers.get("content-type", ""):
+        if response.is_success and "application/json_body" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
         elif response.status_code in (401, 403):
             response_data = {
@@ -60,7 +60,7 @@ class LPService:
         url = f"{self.url}/users/whoami"
         response = self.httpx_requests(req="get", url=url, access_token=access_token)
 
-        if response is not None:
+        if response is not None and isinstance(response, tuple):
             json_response, resp_status, response_time = response
             response_data = {
                 "status_code": resp_status,
@@ -98,7 +98,7 @@ class LPService:
 
         response = self.httpx_requests(req="get", url=url, access_token=access_token)
 
-        if response is not None:
+        if response is not None and isinstance(response, tuple):
             json_response, resp_status, response_time = response
 
             more_pages = json_response["PagingInfo"]["HasMoreItems"]
@@ -139,5 +139,5 @@ class LPService:
 
 
 @lru_cache()
-def get_service(product_version: float) -> LPService:
+def get_service(product_version: str) -> LPService:
     return LPService(product_version)

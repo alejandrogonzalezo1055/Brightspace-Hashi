@@ -1,16 +1,16 @@
-from http.cookies import SimpleCookie
-
 from fastapi import Path, HTTPException, status, Header
 from fastapi.responses import Response, RedirectResponse, JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Annotated
+from dataclasses import dataclass
 import httpx
 import secrets
+import re
 
 from common.settings import get_settings
 
 
-ProductVersion = Annotated[float | None, Path()]
+ProductVersion = Annotated[str | None, Path(), Field(pattern=r"\b\d\.\d{1,3}\b")]
 
 
 class ProductVersionValidator():
@@ -26,7 +26,7 @@ class ProductVersionValidator():
             product = next((p for p in json_response if p["ProductCode"] == self.product), None)
 
             if product:
-                version = next((v for v in product["SupportedVersions"] if float(v) == product_version), None)
+                version = next((v for v in product["SupportedVersions"] if v == product_version), None)
                 if version:
                     product_version = version
                 else:
@@ -67,7 +67,7 @@ class ResponseCookies(BaseModel):
 
 class HttpxRequest(BaseModel):
     url: str = None
-    json: dict | None = None
+    json_body: dict | list | None = None
     #text: str = None
 
 def require_internal_key(authorization: Annotated[str | None, Header()] = None):

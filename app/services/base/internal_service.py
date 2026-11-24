@@ -9,7 +9,8 @@ import json
 from common import settings
 from common.settings import get_settings, TOKEN_LIFE
 from common.schemas import ResponseCookies, HttpxRequest, create_response
-from app.services.api_v1 import lp_service
+from common.errors import get_logger
+from app.services.api_v1 import lp_service, le_service
 
 
 cookies = Annotated[ResponseCookies | None, Cookie()]
@@ -25,7 +26,9 @@ TIMEOUT = 10
 class InternalService:
     def __init__(self):
         self.settings = get_settings()
-        self.lp_service = lp_service.get_service(1.64)
+        self.logger = get_logger().logger
+        self.lp_service = lp_service.get_service("1.64")
+        self.le_service = le_service.get_service("1.100")
         self.go_client = httpx.Client(verify=self.settings.ca_file)
         self.go_internal_url = f"{self.settings.go_base_url}/internal/v1"
         self.headers = {"Authorization": f"Bearer {self.settings.internal_api_key.get_secret_value()}"}
@@ -50,18 +53,18 @@ class InternalService:
         try:
             match req:
                 case "put":
-                    if req_data.json is not None:
+                    if req_data.json_body is not None:
                         response = self.go_client.put(
                             url=req_data.url,
                             headers=self.headers,
-                            json=req_data.json,
+                            json=req_data.json_body,
                         )
                 case "post":
-                    if req_data.json is not None:
+                    if req_data.json_body is not None:
                         response = self.go_client.post(
                             url=req_data.url,
                             headers=self.headers,
-                            json=req_data.json,
+                            json=req_data.json_body,
                         )
         except httpx.ConnectError as e:
             response_data = {
@@ -72,7 +75,7 @@ class InternalService:
 
             return create_response(response_data)
 
-        if "application/json" in response.headers.get("content-type", ""):
+        if "application/json_body" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
         elif "text/plain" in response.headers.get("content-type", ""):
             return response.text, response.status_code, datetime.now().isoformat()
@@ -95,7 +98,10 @@ class InternalService:
             else:
                 d2l_body = go_user_courses["content"]["d2l_response"]
                 # debe mandar una peticion de /dropbox/folders por cada orgunit del d2l_body
-                #self.put_assigment(d2l_body)
+                d2l_orgs = d2l_body["Items"]
+                for d2l_org in d2l_orgs:
+                    if d2l_org["OrgUnit"]["Type"]["Id"] == 3:
+                        self.obtain_user_assigments(access_token, d2l_org["OrgUnit"]["Id"])
 
                 ticket_rep = self.create_ticket(user_external_id)
 
@@ -114,7 +120,7 @@ class InternalService:
             body_type = d2l_response.media_type
 
             match body_type:
-                case "application/json":
+                case "application/json_body":
                     d2l_response_body = json.loads(d2l_response.body)
 
                     go_resp = self.put_user(d2l_response_body)
@@ -132,7 +138,7 @@ class InternalService:
                         case _:
                             if go_resp.media_type == "text/plain":
                                 response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
-                            elif go_resp.media_type == "application/json":
+                            elif go_resp.media_type == "application/json_body":
                                 response_data["content"] = {
                                     "error": json.loads(go_resp.body).get("error"),
                                     "code": json.loads(go_resp.body).get("code"),
@@ -160,7 +166,7 @@ class InternalService:
             body_type = d2l_response.media_type
 
             match body_type:
-                case "application/json":
+                case "application/json_body":
                     d2l_response_body = json.loads(d2l_response.body)
 
                     go_resp = self.put_enrollments(d2l_response_body, external_id)
@@ -181,7 +187,7 @@ class InternalService:
                         case _:
                             if go_resp.media_type == "text/plain":
                                 response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
-                            elif go_resp.media_type == "application/json":
+                            elif go_resp.media_type == "application/json_body":
                                 response_data["content"] = {
                                     "error": json.loads(go_resp.body).get("error"),
                                     "code": json.loads(go_resp.body).get("code"),
@@ -190,6 +196,57 @@ class InternalService:
                                 response_data["content"] = {"error": go_resp.body.decode("utf-8")}
 
                             return create_response(response_data)
+                case _:
+                    response_data = {
+                        "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        "content": "El cuerpo de la respuesta no es valido",
+                        "cookies": None
+                    }
+
+                    return create_response(response_data)
+        else:
+            return d2l_response
+
+
+    def obtain_user_assigments(self, access_token: str, orgUnitId: int):
+        d2l_response = self.le_service.dropbox_folders(access_token=access_token, orgUnitId=orgUnitId)
+
+        if d2l_response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+            body_type = d2l_response.media_type
+
+            match body_type:
+                case "application/json_body":
+                    d2l_response_body = json.loads(d2l_response.body)
+
+                    go_resp = self.put_assigment(f"d2l:ou:{orgUnitId}",body=d2l_response_body)
+                    go_rep_status = go_resp.status_code
+
+                    response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
+
+                    match go_rep_status:
+                        case status.HTTP_200_OK:
+                            go_rep_body = json.loads(go_resp.body)
+
+                            response_data["content"] = go_rep_body
+
+                            self.logger.info(f"Obtain User Assigments. Go acepto y registro la organizacion: '{orgUnitId}'")
+
+                            return response_data
+                        case _:
+                            self.logger.error(f"Obtain User Assigments."
+                                              f"Go no acepto la organizacion: '{orgUnitId}', devolvio el codigo: '{go_rep_status}'"
+                                              f"con el cuerpo:\n{json.loads(go_resp.body)}")
+                            """if go_resp.media_type == "text/plain":
+                                response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
+                            elif go_resp.media_type == "application/json_body":
+                                response_data["content"] = {
+                                    "error": json_body.loads(go_resp.body).get("error"),
+                                    "code": json_body.loads(go_resp.body).get("code"),
+                                }
+                            else:
+                                response_data["content"] = {"error": go_resp.body.decode("utf-8")}
+
+                            return create_response(response_data)"""
                 case _:
                     response_data = {
                         "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -215,14 +272,14 @@ class InternalService:
             }
 
             url = f"{self.go_internal_url}/users/{user_id}"
-            go_req_data = HttpxRequest(url=url, json=user_data)
+            go_req_data = HttpxRequest(url=url, json_body=user_data)
 
             go_resp = self.go_requests(req="put", req_data=go_req_data)
 
             if isinstance(go_resp, Response):  # error response
                 return go_resp
 
-            if go_resp is not None:
+            if go_resp is not None and isinstance(go_resp, tuple):
                 json_response, resp_status, response_time = go_resp
 
                 response_data = {
@@ -261,14 +318,14 @@ class InternalService:
     def put_enrollments(self, body: req_body, external_id: id) -> Response:
         if body is not None:
             url = f"{self.go_internal_url}/users/{external_id}/enrollments"
-            go_req_data = HttpxRequest(url=url, json=body)
+            go_req_data = HttpxRequest(url=url, json_body=body)
 
             go_resp = self.go_requests(req="put", req_data=go_req_data)
 
             if isinstance(go_resp, Response): #error response
                 return go_resp
 
-            if go_resp is not None:
+            if go_resp is not None and isinstance(go_resp, tuple):
                 json_response, resp_status, response_time = go_resp
 
                 response_data = {
@@ -304,8 +361,50 @@ class InternalService:
             return create_response(response_data)
 
 
-    def put_assigment(self, course_external_id: id, body: req_body) -> Response:
-        return
+    def put_assigment(self, external_id: id, body: req_body) -> Response:
+        if body is not None:
+            url = f"{self.go_internal_url}/courses/{external_id}/assignments"
+            go_req_data = HttpxRequest(url=url, json_body=body)
+
+            go_resp = self.go_requests(req="put", req_data=go_req_data)
+
+            if isinstance(go_resp, Response):  # error response
+                return go_resp
+
+            if go_resp is not None and isinstance(go_resp, tuple):
+                json_response, resp_status, response_time = go_resp
+
+                response_data = {
+                    "status_code": resp_status,
+                    "content": json_response,
+                    "cookies": [
+                        {
+                            "key": "response_time",
+                            "value": response_time,
+                            "httponly": True,
+                            "samesite": "lax",
+                            "max_age": TOKEN_LIFE
+                        }
+                    ]
+                }
+
+                return create_response(response_data)
+            else:
+                response_data = {
+                    "status_code": status.HTTP_418_IM_A_TEAPOT,
+                    "content": "La peticion a EduTrace fallo",
+                    "cookies": None
+                }
+
+                return create_response(response_data)
+        else:
+            response_data = {
+                "status_code": status.HTTP_418_IM_A_TEAPOT,
+                "content": "La peticion a Brightspace fallo",
+                "cookies": None
+            }
+
+            return create_response(response_data)
 
 
     def create_ticket(self, external_id: str) -> Response:
@@ -314,7 +413,7 @@ class InternalService:
         }
 
         url = f"{self.go_internal_url}/session-tickets"
-        go_req_data = HttpxRequest(url=url, json=ticket_req)
+        go_req_data = HttpxRequest(url=url, json_body=ticket_req)
 
         go_resp = self.go_requests(req="post", req_data=go_req_data)
 
