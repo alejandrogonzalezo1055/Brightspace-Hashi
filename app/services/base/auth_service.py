@@ -210,7 +210,7 @@ class OAuthService:
                     )
                     self.logger.info("TokenReq-Access. Se envio una peticion post al cliente d2l.")
 
-                    if response.is_success and "application/json_body" in response.headers.get("content-type", ""):
+                    if response.is_success and "application/json" in response.headers.get("content-type", ""):
                         return response.json(), response.status_code, datetime.now().isoformat()
                     else:
                         settings.brightspace_call = False
@@ -227,7 +227,7 @@ class OAuthService:
                     )
                     self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
 
-                    if response.is_success and "application/json_body" in response.headers.get("content-type", ""):
+                    if response.is_success and "application/json" in response.headers.get("content-type", ""):
                         return response.json(), response.status_code, datetime.now().isoformat()
                     else:
                         settings.brightspace_call = False
@@ -458,7 +458,7 @@ class OAuthService:
 
         self.logger.info("TokenReq-Refresh. Se envio una peticion post al cliente d2l.")
 
-        if response.is_success and "application/json_body" in response.headers.get("content-type", ""):
+        if response.is_success and "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
         else:
             settings.brightspace_call = False

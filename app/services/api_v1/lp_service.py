@@ -42,7 +42,7 @@ class LPService:
 
             return create_response(response_data)
 
-        if response.is_success and "application/json_body" in response.headers.get("content-type", ""):
+        if response.is_success and "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
         elif response.status_code in (401, 403):
             response_data = {

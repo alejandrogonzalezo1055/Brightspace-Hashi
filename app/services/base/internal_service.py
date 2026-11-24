@@ -75,7 +75,7 @@ class InternalService:
 
             return create_response(response_data)
 
-        if "application/json_body" in response.headers.get("content-type", ""):
+        if "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
         elif "text/plain" in response.headers.get("content-type", ""):
             return response.text, response.status_code, datetime.now().isoformat()
@@ -120,7 +120,7 @@ class InternalService:
             body_type = d2l_response.media_type
 
             match body_type:
-                case "application/json_body":
+                case "application/json":
                     d2l_response_body = json.loads(d2l_response.body)
 
                     go_resp = self.put_user(d2l_response_body)
@@ -138,7 +138,7 @@ class InternalService:
                         case _:
                             if go_resp.media_type == "text/plain":
                                 response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
-                            elif go_resp.media_type == "application/json_body":
+                            elif go_resp.media_type == "application/json":
                                 response_data["content"] = {
                                     "error": json.loads(go_resp.body).get("error"),
                                     "code": json.loads(go_resp.body).get("code"),
@@ -166,7 +166,7 @@ class InternalService:
             body_type = d2l_response.media_type
 
             match body_type:
-                case "application/json_body":
+                case "application/json":
                     d2l_response_body = json.loads(d2l_response.body)
 
                     go_resp = self.put_enrollments(d2l_response_body, external_id)
@@ -187,7 +187,7 @@ class InternalService:
                         case _:
                             if go_resp.media_type == "text/plain":
                                 response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
-                            elif go_resp.media_type == "application/json_body":
+                            elif go_resp.media_type == "application/json":
                                 response_data["content"] = {
                                     "error": json.loads(go_resp.body).get("error"),
                                     "code": json.loads(go_resp.body).get("code"),
@@ -215,7 +215,7 @@ class InternalService:
             body_type = d2l_response.media_type
 
             match body_type:
-                case "application/json_body":
+                case "application/json":
                     d2l_response_body = json.loads(d2l_response.body)
 
                     go_resp = self.put_assigment(f"d2l:ou:{orgUnitId}",body=d2l_response_body)
@@ -238,7 +238,7 @@ class InternalService:
                                               f"con el cuerpo:\n{json.loads(go_resp.body)}")
                             """if go_resp.media_type == "text/plain":
                                 response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
-                            elif go_resp.media_type == "application/json_body":
+                            elif go_resp.media_type == "application/json":
                                 response_data["content"] = {
                                     "error": json_body.loads(go_resp.body).get("error"),
                                     "code": json_body.loads(go_resp.body).get("code"),
