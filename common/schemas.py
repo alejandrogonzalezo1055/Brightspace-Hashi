@@ -67,8 +67,8 @@ class ResponseCookies(BaseModel):
 
 class HttpxRequest(BaseModel):
     url: str = None
-    json_body: dict | list | None = None
-    #text: str = None
+    req_content: dict | list | bytes | str | None = None
+
 
 def require_internal_key(authorization: Annotated[str | None, Header()] = None):
     ok = False

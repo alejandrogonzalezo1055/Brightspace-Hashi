@@ -21,4 +21,4 @@ def dropbox_folders(service: LPService, access_token: cookie, orgUnitId: id) -> 
 
 @router.get("/{orgUnitId}/dropbox/folders/{folderId}/attachments/{fileId}")
 def descargar_archivo(service: LPService, access_token: cookie, orgUnitId: id, folderId: id, fileId: id) -> Response:
-    return service.descargar_archivo(access_token, orgUnitId, folderId, fileId)
+    return service.get_archivo(access_token, orgUnitId, folderId, fileId)

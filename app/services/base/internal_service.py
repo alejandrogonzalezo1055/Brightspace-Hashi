@@ -15,7 +15,7 @@ from app.services.api_v1 import lp_service, le_service
 
 cookies = Annotated[ResponseCookies | None, Cookie()]
 cookie = Annotated[str | None, Cookie()]
-go_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | None | Response, "Parametro Necesario"]
+go_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | tuple[bytes,int,str] | None | Response, "Parametro Necesario"]
 edutrace_user_rep = Annotated[Response | dict | str | None, "Parametro Necesario"]
 req_body = Annotated[dict | None, Body()]
 id = Annotated[int | str, Path()]
@@ -47,24 +47,30 @@ class InternalService:
         return create_response(response_data)
 
 
-    def go_requests(self, req: str, req_data: HttpxRequest) -> go_resp:
+    def go_requests(self, req: str, req_data: HttpxRequest, file: bool = False) -> go_resp:
         response = httpx.Response(status_code=status.HTTP_501_NOT_IMPLEMENTED)
 
         try:
             match req:
                 case "put":
-                    if req_data.json_body is not None:
+                    if req_data.req_content is not None and not file:
                         response = self.go_client.put(
                             url=req_data.url,
                             headers=self.headers,
-                            json=req_data.json_body,
+                            json=req_data.req_content,
+                        )
+                    elif req_data.req_content is not None:
+                        response = self.go_client.put(
+                            url=req_data.url,
+                            headers=self.headers,
+                            content=req_data.req_content,
                         )
                 case "post":
-                    if req_data.json_body is not None:
+                    if req_data.req_content is not None:
                         response = self.go_client.post(
                             url=req_data.url,
                             headers=self.headers,
-                            json=req_data.json_body,
+                            json=req_data.req_content,
                         )
         except httpx.ConnectError as e:
             response_data = {
@@ -77,8 +83,13 @@ class InternalService:
 
         if "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
-        elif "text/plain" in response.headers.get("content-type", ""):
+
+        elif response.is_success and response.headers.get("content-type", "").startswith(("text/plain", "d2l/unknowntype")):
             return response.text, response.status_code, datetime.now().isoformat()
+
+        elif response.is_success and "application/pdf" in response.headers.get("content-type", ""):
+            return response.content, response.status_code, datetime.now().isoformat()
+
         else:
             return None
 
@@ -97,11 +108,23 @@ class InternalService:
                 return go_user_courses
             else:
                 d2l_body = go_user_courses["content"]["d2l_response"]
-                # debe mandar una peticion de /dropbox/folders por cada orgunit del d2l_body
+
                 d2l_orgs = d2l_body["Items"]
                 for d2l_org in d2l_orgs:
                     if d2l_org["OrgUnit"]["Type"]["Id"] == 3:
-                        self.obtain_user_assigments(access_token, d2l_org["OrgUnit"]["Id"])
+                        go_assigments = self.obtain_user_assigments(access_token, d2l_org["OrgUnit"]["Id"])
+
+                        if isinstance(go_assigments, Response):
+                            return go_assigments
+                        else:
+                            for assigment in go_assigments:
+                                assigment_id = assigment["Id"]
+
+                                files = assigment["Attachments"]
+                                if files:
+                                    for file in files:
+                                        self.obtain_assigments_files(access_token, orgUnitId=d2l_org["OrgUnit"]["Id"], folderId=assigment_id, fileId=file["FileId"])
+
 
                 ticket_rep = self.create_ticket(user_external_id)
 
@@ -116,7 +139,7 @@ class InternalService:
     def obtain_user_id(self, access_token: str) -> edutrace_user_rep:
         d2l_response = self.lp_service.whoami(access_token)
 
-        if d2l_response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+        if d2l_response.status_code not in (503, 401, 403, 501):
             body_type = d2l_response.media_type
 
             match body_type:
@@ -162,7 +185,7 @@ class InternalService:
     def obtain_user_courses(self, access_token: str, external_id: str) -> edutrace_user_rep:
         d2l_response = self.lp_service.myenrollments(access_token)
 
-        if d2l_response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+        if d2l_response.status_code not in (503, 401, 403, 501):
             body_type = d2l_response.media_type
 
             match body_type:
@@ -211,14 +234,14 @@ class InternalService:
     def obtain_user_assigments(self, access_token: str, orgUnitId: int):
         d2l_response = self.le_service.dropbox_folders(access_token=access_token, orgUnitId=orgUnitId)
 
-        if d2l_response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE:
+        if d2l_response.status_code not in (503, 401, 403, 501):
             body_type = d2l_response.media_type
 
             match body_type:
                 case "application/json":
                     d2l_response_body = json.loads(d2l_response.body)
 
-                    go_resp = self.put_assigment(f"d2l:ou:{orgUnitId}",body=d2l_response_body)
+                    go_resp = self.put_assigment(external_id=f"d2l:ou:{orgUnitId}",body=d2l_response_body)
                     go_rep_status = go_resp.status_code
 
                     response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
@@ -234,19 +257,70 @@ class InternalService:
                             return response_data
                         case _:
                             self.logger.error(f"Obtain User Assigments."
-                                              f"Go no acepto la organizacion: '{orgUnitId}', devolvio el codigo: '{go_rep_status}'"
-                                              f"con el cuerpo:\n{json.loads(go_resp.body)}")
-                            """if go_resp.media_type == "text/plain":
-                                response_data["content"] = {"exception": go_resp.body.decode("utf-8")}
-                            elif go_resp.media_type == "application/json":
-                                response_data["content"] = {
-                                    "error": json_body.loads(go_resp.body).get("error"),
-                                    "code": json_body.loads(go_resp.body).get("code"),
-                                }
-                            else:
-                                response_data["content"] = {"error": go_resp.body.decode("utf-8")}
+                                              f"Go no acepto la organizacion: '{orgUnitId}', devolvio el codigo: '{go_rep_status}'")
+                case _:
+                    response_data = {
+                        "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        "content": "El cuerpo de la respuesta no es valido",
+                        "cookies": None
+                    }
 
-                            return create_response(response_data)"""
+                    return create_response(response_data)
+        else:
+            return d2l_response
+
+
+    def obtain_assigments_files(self, access_token: str, orgUnitId: int, folderId: int, fileId: int):
+        d2l_response = self.le_service.get_archivo(access_token=access_token, orgUnitId=orgUnitId, folderId=folderId, fileId=fileId)
+
+        if d2l_response.status_code not in (503, 401, 403, 501):
+            body_type = d2l_response.media_type
+
+            match body_type:
+                case "text/plain" | "d2l/unknowntype":
+                    d2l_response_body = d2l_response.body.decode("utf-8")
+
+                    go_resp = self.put_assigment_file(external_id=f"d2l:ou:{orgUnitId}", body=d2l_response_body)
+                    go_rep_status = go_resp.status_code
+
+                    response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
+
+                    match go_rep_status:
+                        case status.HTTP_200_OK:
+                            go_rep_body = go_resp.body.decode("utf-8")
+
+                            response_data["content"] = go_rep_body
+
+                            self.logger.info(f"Obtain Assigments Files. Go obtuvo el file: '{fileId}'"
+                                             f", del folder: '{folderId}', y organizacion: '{orgUnitId}'")
+
+                            return response_data
+                        case _:
+                            self.logger.error(f"Obtain User Assigments."
+                                              f"Go no acepto la organizacion: '{orgUnitId}'"
+                                              f", devolvio el codigo: '{go_rep_status}'")
+                case "application/pdf":
+                    d2l_response_body = d2l_response.body
+
+                    go_resp = self.put_assigment_file(external_id=f"d2l:ou:{orgUnitId}", body=d2l_response_body)
+                    go_rep_status = go_resp.status_code
+
+                    response_data = {"status_code": go_rep_status, "content": {}, "cookies": None}
+
+                    match go_rep_status:
+                        case status.HTTP_200_OK:
+                            go_rep_body = go_resp.body
+
+                            response_data["content"] = go_rep_body
+
+                            self.logger.info(f"Obtain Assigments Files. Go obtuvo el file: '{fileId}'"
+                                             f", del folder: '{folderId}', y organizacion: '{orgUnitId}'")
+
+                            return response_data
+                        case _:
+                            self.logger.error(f"Obtain User Assigments."
+                                              f"Go no acepto la organizacion: '{orgUnitId}'"
+                                              f", devolvio el codigo: '{go_rep_status}'")
                 case _:
                     response_data = {
                         "status_code": status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -272,7 +346,7 @@ class InternalService:
             }
 
             url = f"{self.go_internal_url}/users/{user_id}"
-            go_req_data = HttpxRequest(url=url, json_body=user_data)
+            go_req_data = HttpxRequest(url=url, req_content=user_data)
 
             go_resp = self.go_requests(req="put", req_data=go_req_data)
 
@@ -318,7 +392,7 @@ class InternalService:
     def put_enrollments(self, body: req_body, external_id: id) -> Response:
         if body is not None:
             url = f"{self.go_internal_url}/users/{external_id}/enrollments"
-            go_req_data = HttpxRequest(url=url, json_body=body)
+            go_req_data = HttpxRequest(url=url, req_content=body)
 
             go_resp = self.go_requests(req="put", req_data=go_req_data)
 
@@ -361,10 +435,56 @@ class InternalService:
             return create_response(response_data)
 
 
-    def put_assigment(self, external_id: id, body: req_body) -> Response:
+    def put_assigment(self, body: req_body, external_id: id) -> Response:
         if body is not None:
             url = f"{self.go_internal_url}/courses/{external_id}/assignments"
-            go_req_data = HttpxRequest(url=url, json_body=body)
+            go_req_data = HttpxRequest(url=url, req_content=body)
+
+            go_resp = self.go_requests(req="put", req_data=go_req_data)
+
+            if isinstance(go_resp, Response):  # error response
+                return go_resp
+
+            if go_resp is not None and isinstance(go_resp, tuple):
+                json_response, resp_status, response_time = go_resp
+
+                response_data = {
+                    "status_code": resp_status,
+                    "content": json_response,
+                    "cookies": [
+                        {
+                            "key": "response_time",
+                            "value": response_time,
+                            "httponly": True,
+                            "samesite": "lax",
+                            "max_age": TOKEN_LIFE
+                        }
+                    ]
+                }
+
+                return create_response(response_data)
+            else:
+                response_data = {
+                    "status_code": status.HTTP_418_IM_A_TEAPOT,
+                    "content": "La peticion a EduTrace fallo",
+                    "cookies": None
+                }
+
+                return create_response(response_data)
+        else:
+            response_data = {
+                "status_code": status.HTTP_418_IM_A_TEAPOT,
+                "content": "La peticion a Brightspace fallo",
+                "cookies": None
+            }
+
+            return create_response(response_data)
+
+
+    def put_assigment_file(self, body: req_body, external_id: id) -> Response:
+        if body is not None:
+            url = f"{self.go_internal_url}"
+            go_req_data = HttpxRequest(url=url, req_content=body)
 
             go_resp = self.go_requests(req="put", req_data=go_req_data)
 
@@ -413,7 +533,7 @@ class InternalService:
         }
 
         url = f"{self.go_internal_url}/session-tickets"
-        go_req_data = HttpxRequest(url=url, json_body=ticket_req)
+        go_req_data = HttpxRequest(url=url, req_content=ticket_req)
 
         go_resp = self.go_requests(req="post", req_data=go_req_data)
 

@@ -86,7 +86,7 @@ class LEService():
             return response
         else:
             response_data = {
-                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "status_code": status.HTTP_501_NOT_IMPLEMENTED,
                 "content": "La respuesta de Brightspace fue 'None'",
                 "cookies": None
             }
@@ -94,7 +94,7 @@ class LEService():
             return create_response(response_data)
 
 
-    def descargar_archivo(self, access_token: cookie, orgUnitId: int, folderId: int, fileId: int) -> Response:
+    def get_archivo(self, access_token: cookie, orgUnitId: int, folderId: int, fileId: int) -> Response:
         url = f"{self.url}/{orgUnitId}/dropbox/folders/{folderId}/attachments/{fileId}"
         response = self.httpx_requests(req="get", url=url, access_token=access_token)
 
@@ -119,7 +119,7 @@ class LEService():
             return response
         else:
             response_data = {
-                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "status_code": status.HTTP_501_NOT_IMPLEMENTED,
                 "content": "La respuesta de Brightspace fue 'None'",
                 "cookies": None
             }

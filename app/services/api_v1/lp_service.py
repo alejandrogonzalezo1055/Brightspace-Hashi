@@ -81,7 +81,7 @@ class LPService:
             return response
         else:
             response_data = {
-                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "status_code": status.HTTP_501_NOT_IMPLEMENTED,
                 "content": "La respuesta de Brightspace fue 'None'",
                 "cookies": None
             }
@@ -130,7 +130,7 @@ class LPService:
             return response
         else:
             response_data = {
-                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "status_code": status.HTTP_501_NOT_IMPLEMENTED,
                 "content": "La respuesta de Brightspace fue 'None'",
                 "cookies": None
             }
