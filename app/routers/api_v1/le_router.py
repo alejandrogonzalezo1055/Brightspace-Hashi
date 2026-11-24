@@ -18,3 +18,7 @@ id = Annotated[int, Path()]
 @router.get("/{orgUnitId}/dropbox/folders/")
 def dropbox_folders(service: LPService, access_token: cookie, orgUnitId: id) -> Response:
     return service.dropbox_folders(access_token, orgUnitId)
+
+@router.get("/{orgUnitId}/dropbox/folders/{folderId}/attachments/{fileId}")
+def descargar_archivo(service: LPService, access_token: cookie, orgUnitId: id, folderId: id, fileId: id) -> Response:
+    return service.descargar_archivo(access_token, orgUnitId, folderId, fileId)

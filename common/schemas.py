@@ -113,10 +113,12 @@ def create_response(data: dict | None = None) -> Response:
 
     if isinstance(data["content"], str):
         response = Response(content=data["content"], status_code=data["status_code"])
+    elif isinstance(data["content"], bytes):
+        response = Response(content=data["content"], status_code=data["status_code"])
     elif isinstance(data["content"], (dict, list)):
         response = JSONResponse(content=data["content"], status_code=data["status_code"])
     else:
-        response = Response(media_type="text/plain", content="El tipo de la respuesta que quiere crear no se reconoce", status_code=status.HTTP_418_IM_A_TEAPOT)
+        response = Response(media_type="text/plain", content="Create-Response. El tipo de la respuesta que quiere crear no se reconoce", status_code=status.HTTP_418_IM_A_TEAPOT)
 
     if data["cookies"] is not None:
         response = add_cookies(response, data["cookies"])

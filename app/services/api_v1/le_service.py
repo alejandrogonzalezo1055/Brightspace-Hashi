@@ -10,7 +10,7 @@ from common.schemas import ResponseCookies, ProductVersion, create_response
 
 cookies = Annotated[ResponseCookies | None, Cookie()]
 cookie = Annotated[str | None, Cookie()]
-httpx_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | Response | None, "Parametro Necesario"]
+httpx_resp = Annotated[tuple[dict,int,str] | tuple[str,int,str] | tuple[bytes,int,str] | Response | None, "Parametro Necesario"]
 
 
 class LEService():
@@ -42,6 +42,13 @@ class LEService():
 
         if response.is_success and "application/json" in response.headers.get("content-type", ""):
             return response.json(), response.status_code, datetime.now().isoformat()
+
+        elif response.is_success and response.headers.get("content-type", "").startswith(("text/plain", "d2l/unknowntype")):
+            return response.text, response.status_code, datetime.now().isoformat()
+
+        elif response.is_success and "application/pdf" in response.headers.get("content-type", ""):
+            return response.content, response.status_code, datetime.now().isoformat()
+
         elif response.status_code in (401, 403):
             response_data = {
                 "status_code": response.status_code,
@@ -63,6 +70,39 @@ class LEService():
             response_data = {
                 "status_code": resp_status,
                 "content": json_response,
+                "cookies": [
+                    {
+                        "key": "response_time",
+                        "value": response_time,
+                        "httponly": True,
+                        "samesite": "lax",
+                        "max_age": TOKEN_LIFE
+                    }
+                ]
+            }
+
+            return create_response(response_data)
+        elif isinstance(response, Response):
+            return response
+        else:
+            response_data = {
+                "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                "content": "La respuesta de Brightspace fue 'None'",
+                "cookies": None
+            }
+
+            return create_response(response_data)
+
+
+    def descargar_archivo(self, access_token: cookie, orgUnitId: int, folderId: int, fileId: int) -> Response:
+        url = f"{self.url}/{orgUnitId}/dropbox/folders/{folderId}/attachments/{fileId}"
+        response = self.httpx_requests(req="get", url=url, access_token=access_token)
+
+        if response is not None and isinstance(response, tuple):
+            response_content, resp_status, response_time = response
+            response_data = {
+                "status_code": resp_status,
+                "content": response_content,
                 "cookies": [
                     {
                         "key": "response_time",
