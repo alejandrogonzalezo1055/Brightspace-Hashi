@@ -1,0 +1,5 @@
+flowchart LR
+    W["Navegador"] -->|"Entrar con Brightspace"| P["Este servicio :9000"]
+    P -->|"OAuth2 + API"| L["Brightspace<br/>(Campus Virtual)"]
+    P -->|"/internal/v1/*"| G["EduTrace (Go) :8080"]
+    G -->|"entregas y notas (por hacer)"| P

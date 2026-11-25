@@ -1,158 +1,250 @@
-# EduTrace - D2L Connection
+# EduTrace - Brightspace Hashi
 
-Cliente OAuth2 (Authorization Code) de EduTrace hacia Brightspace (D2L). Hoy se conecta al mock de Brightspace y obtiene tokens de acceso y de refresco. Es parte del proyecto de innovación en TI.
+**EduTrace - Brightspace Hashi** es el servicio que conecta [EduTrace](https://github.com/alejandrogonzalezo1055/EDU-TRACE) con el **Campus Virtual** de la universidad, que funciona sobre **Brightspace (D2L)**. Es el puente entre las dos plataformas: el estudiante o el docente entra con su cuenta de Brightspace, y las clases, los roles, los talleres y sus archivos llegan solos a EduTrace, sin crear otra cuenta ni copiar nada a mano.
 
-## Requisitos
+> EduTrace nunca guarda la contraseña de nadie. El usuario se identifica en Brightspace; este servicio solo recibe un permiso (OAuth2) y lo usa para traer lo que EduTrace necesita.
 
-- Python 3.14. El `.venv` local se creó con esa versión. El código usa `match` y f-strings con comillas dobles anidadas, así que necesita 3.12 o superior.
-- Acceso al mock de Brightspace por Tailscale. La IP o nombre del mock va en `common/.env`.
-- Mock corriendo en el puerto 8800 (carpeta hermana `mock-brightspace`).
+---
 
-## Instalación
+## 🧭 Qué hace
+
+- **Inicio de sesión con Brightspace** (OAuth2, flujo de código de autorización): lleva al usuario a Brightspace, recibe el código de vuelta, lo canjea por tokens y abre la sesión en EduTrace.
+- **Sincroniza con Go** (el backend de EduTrace): el usuario, sus inscripciones, los talleres de cada curso y los archivos adjuntos de cada taller.
+- **Cliente de la API de Brightspace**: consulta quién es el usuario (`whoami`), sus cursos (`myenrollments`), las carpetas de entrega (*dropbox*) y descarga sus adjuntos.
+- **Guarda los tokens en cookies HttpOnly**: JavaScript de la página no puede leerlos. No hay base de datos propia.
+- **Se protege solo**: limita los intentos de inicio de sesión por IP, valida la versión de la API de Brightspace y exige una clave (`Bearer`) en las rutas internas.
+
+Qué falta: enviar a Brightspace las **entregas** de los estudiantes y las **notas con su retroalimentación** (`dropbox/submit` y `dropbox/feedback`). Ver [Estado y limitaciones](#-estado-y-limitaciones).
+
+---
+
+## 👥 Equipo del proyecto
+
+Grupo #4 · Proyecto de Innovación en TI · Pontificia Universidad Javeriana
+
+| Nombre | Aporte en este repositorio |
+| :--- | :--- |
+| Alejandro González Ochoa | Autor de este servicio (integración con Brightspace) · https://github.com/alejandrogonzalezo1055 |
+| César Santiago Canro Cabra | Equipo EduTrace |
+| Iván Santiago Lastra Romero | Equipo EduTrace |
+| Marlon Jhoan García Restrepo | Equipo EduTrace |
+| Samuel Iregui Franco | Equipo EduTrace |
+
+---
+
+## 🛠️ Tecnologías utilizadas
+
+- **Lenguaje y framework:** Python 3.12 o superior (se desarrolló con 3.14), FastAPI
+- **Cliente HTTP:** httpx
+- **Configuración y validación:** pydantic, pydantic-settings
+- **Servidor:** uvicorn, con HTTPS local de `mkcert`
+- **Protocolo:** OAuth2 (Authorization Code) contra Brightspace
+- **Control de versiones:** Git
+
+---
+
+## 🔄 Cómo funciona
+
+```mermaid
+flowchart LR
+    W["Navegador"] -->|"Entrar con Brightspace"| P["Este servicio :9000"]
+    P -->|"OAuth2 + API"| L["Brightspace<br/>(Campus Virtual)"]
+    P -->|"/internal/v1/*"| G["EduTrace (Go) :8080"]
+    G -->|"entregas y notas (por hacer)"| P
+```
+
+### El inicio de sesión, paso a paso
+
+```mermaid
+sequenceDiagram
+    participant N as Navegador
+    participant P as Brightspace Hashi
+    participant B as Brightspace
+    participant G as EduTrace (Go)
+    N->>P: GET /auth/login-url
+    P-->>N: 302 a Brightspace (state aleatorio en cookie)
+    N->>B: el usuario inicia sesión y da su consentimiento
+    B-->>N: 302 a /auth/callback?code=…&state=…
+    N->>P: GET /auth/callback
+    P->>B: canjea el code por access_token y refresh_token
+    P->>B: whoami y myenrollments
+    P->>G: PUT del usuario y de sus inscripciones
+    P->>B: carpetas de entrega de cada curso (dropbox)
+    P->>G: PUT de los talleres y de sus archivos
+    P->>G: POST session-tickets
+    G-->>P: ticket de un solo uso
+    P-->>N: 302 a EduTrace /api/auth/session?ticket=… (más las cookies de tokens)
+```
+
+1. `GET /auth/login-url` genera un `state` aleatorio, lo guarda en la cookie `oauth_state` (HttpOnly) y redirige a Brightspace. Ese `state` evita ataques CSRF: un callback que este servicio no inició no pasa la comparación.
+2. Brightspace devuelve al navegador a `/auth/callback` con un `code` de un solo uso.
+3. El servicio canjea el `code` por `access_token` y `refresh_token`, y los deja en cookies (`access_token`, `refresh_token`, `response_time`).
+4. Con el `access_token` trae el perfil y las inscripciones del usuario y se los manda a Go; por cada curso trae las carpetas de entrega y sus adjuntos y también se los manda a Go.
+5. Pide a Go un **ticket de sesión** y redirige al navegador a `GO_BASE_URL/api/auth/session?ticket=…`. Con ese ticket EduTrace abre la sesión.
+6. Si algo falla, el navegador vuelve a `FRONTEND_URL/login?error=…` (por ejemplo `access_denied` o `session_expired`).
+
+El refresh token de Brightspace es de **un solo uso**: cada renovación devuelve uno nuevo y el anterior deja de servir.
+
+---
+
+## 🗂️ Estructura del proyecto
+
+```text
+EduTrace - Brightspace Hashi/
+├── app/
+│   ├── main.py                    # create_app(): routers y middleware
+│   ├── middleware.py              # límite de intentos de login y renovación de tokens
+│   ├── routers/
+│   │   ├── base/
+│   │   │   ├── auth_router.py     # /auth/*  (login, callback, tokens)
+│   │   │   ├── internal_router.py # /internal/v1/*  (la clave protege estas rutas)
+│   │   │   └── health.py          # GET /health
+│   │   └── api_v1/
+│   │       ├── lp_router.py       # /lp/{versión}/…  Learning Platform de Brightspace
+│   │       └── le_router.py       # /le/{versión}/…  Learning Environment de Brightspace
+│   └── services/
+│       ├── base/
+│       │   ├── auth_service.py    # OAuth2 y cookies
+│       │   └── internal_service.py# sincronización con Go
+│       └── api_v1/
+│           ├── lp_service.py      # whoami, myenrollments
+│           └── le_service.py      # dropbox: carpetas y adjuntos
+├── common/
+│   ├── settings.py                # configuración (pydantic-settings)
+│   ├── schemas.py                 # modelos, cookies, respuestas y validación de versión
+│   ├── errors.py                  # logger
+│   └── .env.example               # plantilla (ver «Configuración»)
+├── data-brightspace/              # PDF de los talleres que se subieron a Brightspace
+├── localhost.pem, localhost-key.pem  # certificado local (mkcert), no se suben
+└── README.md
+```
+
+---
+
+## 📥 Instrucciones de uso
+
+### 1. Requisitos previos
+- **Python 3.12 o superior.** El código usa `match`.
+- **mkcert** para el certificado HTTPS de `localhost`. El `redirect_uri` registrado en Brightspace es `https://localhost:9000/auth/callback`, así que el servicio **tiene que** servirse por HTTPS en el puerto 9000.
+- Una **aplicación OAuth2 registrada en Brightspace** (ID, secreto y scopes), que la administración del Campus Virtual aprueba.
+- **EduTrace (Go)** en marcha, con `INTERNAL_API_KEY` y `PYTHON_API_KEY` definidas. Ver su [README](https://github.com/alejandrogonzalezo1055/EDU-TRACE).
+
+### 2. Instalar
 
 ```bash
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install fastapi httpx pydantic-settings uvicorn
 ```
 
-No hay `requirements.txt` ni `pyproject.toml`. Las dependencias salen de los imports del código:
+No hay `requirements.txt` ni `pyproject.toml`. Las dependencias salen de los imports del código.
 
-| Paquete | Dónde se usa |
+### 3. Certificado local
+
+```bash
+mkcert -install
+mkcert localhost 127.0.0.1 ::1
+```
+
+Deja `localhost.pem` y `localhost-key.pem` en la raíz del proyecto. Para que Go confíe en el certificado, su `PYTHON_CA_FILE` apunta a `$(mkcert -CAROOT)/rootCA.pem`.
+
+### 4. Configuración
+
+Las variables se leen de `common/.env` (ruta relativa: **ejecuta el servicio desde la raíz del proyecto**). `common/.env` no se sube a git. **Nunca pongas el secreto de la aplicación en un documento ni lo subas.**
+
+| Variable | Para qué sirve |
 |---|---|
-| `fastapi` | `app/` (routers, app factory) |
-| `httpx` | `app/services/oauth_service.py` (llamadas al mock) |
-| `pydantic` | `common/schemas.py` |
-| `pydantic-settings` | `common/settings.py` |
-| `uvicorn` | Solo para arrancar el servidor |
+| `API_BASE_URL` | Host de Brightspace para la API y el logout (sin `https://`) |
+| `AUTH_BASE_URL` | Host de Brightspace para autorizar y emitir tokens (sin `https://`) |
+| `APP_ID`, `APP_SECRET` | Credenciales (`client_id` y `client_secret`) de la aplicación registrada en Brightspace |
+| `APP_SCOPE` | Scopes pedidos, separados por **espacios** |
+| `INTERNAL_API_KEY` | Clave con la que este servicio llama a Go (≥32 bytes). Misma que la de Go |
+| `PYTHON_API_KEY` | Clave que Go manda a este servicio como `Authorization: Bearer` (≥32 bytes). Misma que la de Go. Distinta de `INTERNAL_API_KEY` |
+| `GO_BASE_URL` | URL de EduTrace (Go), por ejemplo `https://localhost:8080` |
+| `FRONTEND_URL` | URL del frontend, a donde vuelve el navegador si el login falla |
+| `CA_FILE` | `rootCA.pem` de mkcert (el archivo, no la carpeta), para confiar en el HTTPS de Go |
+| `LP_VERSION`, `LE_VERSION` | Versión de la API de Brightspace (Learning Platform y Learning Environment) |
 
-Versiones instaladas en el `.venv` local al escribir este README: fastapi 0.162.0, httpx 0.28.1, pydantic 2.14.2, pydantic-settings 2.16.2, uvicorn 0.54.0 (starlette 1.10.0 viene como dependencia de fastapi).
+> ⚠ `common/.env.example` quedó con las variables de una versión anterior (`MOCK_*`). Usa la tabla de arriba como referencia hasta que se actualice la plantilla.
 
-## Configuración
+Scopes con los que se desarrolló (los habilitó la administración del Campus Virtual): `users:own_profile:read`, `enrollment:own_enrollment:read`, `enrollment:orgunit:read`, `grades:gradeobjects:read`, `grades:gradevalues:read`, `dropbox:folders:read`, `content:completions:read`, `content:file:read`, `content:modules:readonly`, `content:toc:read` y `content:topics:readonly`. Un scope mal escrito o no habilitado da `invalid_scope` sin decir cuál falló: se prueban de uno en uno.
 
-Las variables se leen de `common/.env`. La ruta es relativa, así que la app debe ejecutarse desde la raíz del proyecto.
-
-Crear el archivo local a partir de la plantilla:
+### 5. Ejecutar
 
 ```bash
-cp common/.env.example common/.env
+uvicorn app.main:create_app --factory --port 9000 \
+  --ssl-keyfile localhost-key.pem --ssl-certfile localhost.pem
 ```
 
-Luego reemplazar los valores de ejemplo por los reales. `common/.env` no se sube al repositorio (está en `.gitignore`). Si alguna vez se subió a un repositorio remoto, hay que rotar el secreto.
+- `--factory` es obligatorio: `create_app()` es una función que crea la app.
+- Sin `--reload`, los cambios de código no se recogen.
+- Usa **`localhost`, no `127.0.0.1`**: las cookies son por host y el `redirect_uri` registrado usa `localhost`.
+- Tras cambiar `common/.env` hay que reiniciar y volver a iniciar sesión (un token ya emitido conserva sus scopes).
 
-| Variable | Para qué sirve | Ejemplo (falso) |
+### 6. Probar
+
+1. Con Go y este servicio en marcha, abre el frontend de EduTrace y pulsa **Entrar con Brightspace**.
+2. Para ver los logs: la consola de `uvicorn`. Verás si Go aceptó cada curso y cada taller.
+3. Comprobación rápida de vida: `curl --cacert "$(mkcert -CAROOT)/rootCA.pem" https://localhost:9000/health`.
+4. Para cerrar sesión en Brightspace y cambiar de usuario: `https://localhost:9000/auth/logout-url`.
+
+---
+
+## 🔌 Rutas
+
+| Método | Ruta | Qué hace |
 |---|---|---|
-| `MOCK_API_BASE_URL` | Host del mock para la API y el logout | `192.0.2.10` |
-| `MOCK_AUTH_BASE_URL` | Host del mock para autorización y emisión de tokens | `192.0.2.10` |
-| `APP_ID` | `client_id` de la aplicación registrada en el mock | `00000000-0000-0000-0000-000000000000` |
-| `APP_SECRET` | `client_secret` de esa aplicación | `cambia-por-el-secreto-real` |
-| `APP_SCOPE` | Scopes pedidos, separados por espacios | `users:own_profile:read grades:own_grades:read` |
+| GET | `/health` | Sondeo de vida |
+| GET | `/auth/login-url` | 302 a Brightspace con `state` aleatorio |
+| GET | `/auth/callback` | Recibe `code` y `state`, canjea los tokens, sincroniza con Go y redirige con el ticket |
+| GET | `/auth/logout-url` | 302 al cierre de sesión de Brightspace (borra las cookies de este servicio) |
+| POST | `/auth/obtain-token` | Renueva el access token (`refresh`) o lo obtiene (`access`) |
+| GET | `/lp/{versión}/users/whoami` | Quién es el usuario en Brightspace |
+| GET | `/lp/{versión}/enrollments/myenrollments/` | Cursos y roles del usuario (todas las páginas) |
+| GET | `/le/{versión}/{orgUnitId}/dropbox/folders/` | Carpetas de entrega de un curso (los talleres) |
+| GET | `/le/{versión}/{orgUnitId}/dropbox/folders/{folderId}/attachments/{fileId}` | Descarga un adjunto de un taller |
+| GET, PUT, POST | `/internal/v1/*` | Rutas internas, protegidas con `Authorization: Bearer <PYTHON_API_KEY>` |
 
-El puerto 8800 del mock y la URL de callback `http://localhost:9000/auth/callback` están fijos en el código, no en la configuración.
+El servicio valida la versión de la API contra las que Brightspace soporta: si la versión de la ruta no es válida responde 406.
 
-## Cómo ejecutar
+---
 
-Desde la raíz del proyecto:
+## ⚠️ Estado y limitaciones
 
-```bash
-uvicorn app.main:create_app --factory --port 9000
-```
+**Funciona** (verificado contra el Brightspace de pruebas):
+- Inicio de sesión con Brightspace, canje y renovación de tokens.
+- Sincronización de usuario, inscripciones, talleres y archivos adjuntos con Go.
 
-`--factory` es obligatorio porque `create_app()` es una función que crea la app. Para desarrollo se puede agregar `--reload`:
+**Falta:**
+- `dropbox/submit`: enviar a Brightspace las entregas oficiales de los estudiantes.
+- `dropbox/feedback`: devolver a Brightspace la nota y la retroalimentación que aprueba el docente.
+- Mientras tanto, la cola de Go hacia Brightspace está pausada (`D2L_QUEUE_PAUSED` en Go): las entregas y revisiones quedan	 guardadas en EduTrace y no se envían.
 
-```bash
-uvicorn app.main:create_app --factory --port 9000 --reload
-```
+**Limitaciones conocidas:**
+- **Renovación automática de tokens (middleware):** mira los `Set-Cookie` de la *respuesta* y no las cookies de la *petición*, por eso casi nunca se activa. Mientras tanto la renovación es manual con `POST /auth/obtain-token`.
+- **Bloqueo por demasiados intentos de login:** máximo 8 intentos por IP en una ventana de 5 minutos; al pasarse, 10 minutos de bloqueo. El contador vive en memoria: se pierde al reiniciar.
+- **Errores de Go o Brightspace** a mitad del callback se devuelven al navegador como respuesta cruda en algunos casos, y no siempre como redirección a `/login?error=…`.
+- **Sincronización por usuario:** si dos usuarios del mismo curso ven carpetas distintas, el último en entrar define cuáles quedan visibles (inferencia por el comportamiento de Go, sin probar).
+- **Rutas internas duplicadas:** `internal_router.py` aún declara rutas (`PUT /users…`, `…/enrollments`, `…/assignments`, `POST /session-tickets`) que le corresponden a Go según el contrato.
+- **Sin pruebas automáticas** ni `requirements.txt`.
+- El `redirect_uri` (`https://localhost:9000/auth/callback`) está fijo en el código: cambiar de host o puerto exige editar `auth_service.py`.
 
-## Endpoints
+---
 
-| Método | Ruta | Qué hace | Cookies y cuerpo |
-|---|---|---|---|
-| GET | `/health` | Sondeo de vida. Responde `{"status": "ok"}` | Ninguna |
-| GET | `/auth/login-url` | Responde 302 a `/oauth2/auth` del mock con `state` aleatorio | Pone `oauth_state` (HttpOnly, 300 s) |
-| GET | `/auth/logout-url` | Responde 302 a `/d2l/logout` del mock | Ninguna |
-| GET | `/auth/callback` | Recibe `code` y `state` por query. Compara `state` con la cookie `oauth_state` | Lee `oauth_state`. Pone `auth_code` (HttpOnly, 300 s). Responde 200 con texto |
-| POST | `/auth/obtain-token` | Con `"access"` canjea `auth_code` por tokens. Con `"refresh"` usa `refresh_token` para renovar | Lee `auth_code` o `refresh_token`. Body JSON: una cadena, `"access"` o `"refresh"`. Pone `access_token`, `refresh_token` y `response_time`. Responde `token_type`, `expires_in` y `scope` |
+## 🎓 Contexto académico
 
-Errores que se ven en el código:
+Proyecto de Innovación en TI, Pontificia Universidad Javeriana (Grupo #4). EduTrace es una plataforma de retroalimentación formativa para Introducción a la Programación, donde la IA propone y el profesor decide. Este servicio es la parte que la conecta con el Campus Virtual.
 
-- `/auth/callback`: 400 si no hay cookies, si falta `oauth_state` o si `state` no coincide. 422 si `state` tiene menos de 32 caracteres (verificado).
-- `/auth/obtain-token`: 400 si no llega la cookie necesaria (verificado). 406 si la opción no es `access` ni `refresh`. 422 si el body es un objeto JSON y no una cadena (verificado).
+---
 
-## Flujo de autenticación
+## 📧 Contacto
 
-1. El navegador abre `GET /auth/login-url`. La app genera un `state` aleatorio, lo guarda en la cookie `oauth_state` y redirige al mock.
-2. El usuario inicia sesión y da consentimiento en el mock. El mock redirige a `http://localhost:9000/auth/callback?code=...&state=...`.
-3. `/auth/callback` compara el `state` de la URL con la cookie `oauth_state`. Si coinciden, guarda el código en la cookie `auth_code`. La cookie `oauth_state` evita CSRF: un callback que no inició esta app no pasa la comparación.
-4. `POST /auth/obtain-token` con `"access"` canjea `auth_code` en el mock por `access_token` y `refresh_token`. Las dos cookies quedan guardadas.
-5. `POST /auth/obtain-token` con `"refresh"` usa la cookie `refresh_token` para pedir un access token nuevo. El refresh token es de un solo uso (lo indica la documentación del mock, `mock-brightspace/docs/04-TOKENS-SCOPES-PERMISOS.md` §5): el mock devuelve uno nuevo y la app lo guarda en la cookie. El refresh anterior deja de servir.
+**Alejandro González Ochoa**
+Estudiante de Ingeniería de Sistemas, Pontificia Universidad Javeriana
+GitHub: https://github.com/alejandrogonzalezo1055
 
-Los tokens se guardan en cookies HttpOnly, así que JavaScript de la página no puede leerlas. El código de autorización vence en 5 minutos y sirve una sola vez.
+---
 
-## Cómo probar a mano
+## ⚖️ Licencia
 
-Usar `localhost`, no `127.0.0.1`. Las cookies son por host, y el `redirect_uri` registrado usa `localhost`. Si se mezclan, el navegador no envía las cookies a donde deben ir.
-
-1. Arrancar el mock (puerto 8800) y la app (puerto 9000).
-2. En el navegador abrir `http://localhost:9000/auth/login-url`. Iniciar sesión en el mock. El navegador vuelve a `/auth/callback`.
-3. Copiar el valor de la cookie `auth_code` desde las herramientas de desarrollo del navegador y pedir el access token:
-
-   ```bash
-   curl -i -X POST http://localhost:9000/auth/obtain-token \
-     -H "Content-Type: application/json" \
-     -H "Cookie: auth_code=<VALOR_DE_AUTH_CODE>" \
-     -d '"access"'
-   ```
-
-4. Para renovar, copiar la cookie `refresh_token` que dejó el paso anterior y llamar:
-
-   ```bash
-   curl -i -X POST http://localhost:9000/auth/obtain-token \
-     -H "Content-Type: application/json" \
-     -H "Cookie: refresh_token=<VALOR_DE_REFRESH_TOKEN>" \
-     -d '"refresh"'
-   ```
-
-El body es la cadena JSON `"access"` o `"refresh"`, no un objeto `{"option": ...}`. Con objeto la API responde 422.
-
-Para cambiar de usuario, abrir `http://localhost:9000/auth/logout-url` y cerrar sesión en el mock. La app no borra sus cookies, así que hay que eliminar `auth_code`, `access_token`, `refresh_token`, `response_time` y `oauth_state` desde las herramientas del navegador, o esperar a que venzan.
-
-## Estructura del proyecto
-
-```
-.
-├── .gitignore
-├── README.md
-├── app/
-│   ├── __init__.py
-│   ├── main.py                 # create_app(): middleware, errores y routers
-│   ├── routers/
-│   │   ├── __init__.py
-│   │   ├── health.py           # GET /health
-│   │   └── oauth_router.py     # /auth/*
-│   └── services/
-│       ├── __init__.py
-│       └── oauth_service.py    # lógica OAuth2 contra el mock
-├── common/
-│   ├── __init__.py
-│   ├── .env                    # local, no se versiona
-│   ├── .env.example            # plantilla con valores falsos
-│   ├── errors.py               # register_error_handler (vacío)
-│   ├── schemas.py              # modelos Pydantic y helpers de cookies y respuestas
-│   └── settings.py             # Settings (pydantic-settings)
-└── .idea/                      # configuración de PyCharm (en .gitignore, pero aún rastreada)
-```
-
-## Limitaciones conocidas
-
-- Middleware de renovación automática no funciona (`app/main.py:14-35`). Llama a `OAuthServ.auto_obtain_tokens(...)` sobre el alias `Annotated`, no sobre una instancia. Al llamarlo, Python lanza `TypeError` por el argumento `response` que falta (verificado). Además, compara `time_diff.seconds`, que ignora los días, y parte de un `strptime` con fecha 1900. Solo revisa la respuesta que se acaba de generar, que es la que trae `response_time` recién creado, así que la rama de renovación casi nunca se activa.
-- `auto_access_token` tiene errores (`app/services/oauth_service.py:289-291`). Usa `.json` sin paréntesis y referencia `auth_code`, que no existe en ese método. Es código que no se usa desde ningún endpoint, pero el middleware sí intenta llamarlo.
-- `/auth/callback` sin query string responde 500 (verificado). `request` puede ser `None` y se accede a `request.state` sin comprobar.
-- `redirect_uri` fijo en `http://localhost:9000/auth/callback` (`oauth_service.py:47` y `:148`). Puerto 8800 fijo para el mock (`oauth_service.py:32`, `:67`, `:138`). Cambiar de host o puerto exige editar código.
-- `register_error_handler` está vacío (`common/errors.py:4-5`). Los errores usan los manejadores por defecto de FastAPI.
-- `api_v1 = APIRouter(prefix="/api/v1")` se incluye sin rutas (`app/main.py:41-42`).
-- `get_service` tiene `@lru_cache`. La instancia no guarda estado por usuario: lo que comparte es el `httpx.Client` (`oauth_service.py:28`), que nunca se cierra. Los tokens viajan en cookies del navegador, no en el servidor.
-- Las URL del mock salen de `MOCK_*`, que tienen default `None`. Si falta la variable, la URL queda como `http://None:8800`. `APP_SECRET` también tiene default `None`: la app arranca sin él y falla al pedir tokens.
-- Las cookies no llevan `secure`. Es aceptable para `localhost` por HTTP, pero no para un despliegue.
-- Sin tests, sin logging y sin `requirements.txt` o `pyproject.toml`.
-- `common/.env` está versionado en git (ver `git ls-files`). Hay que quitarlo del índice y rotar las credenciales.
+Proyecto desarrollado con fines académicos.

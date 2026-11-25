@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant N as Navegador
+    participant P as Brightspace Hashi
+    participant B as Brightspace
+    participant G as EduTrace (Go)
+    N->>P: GET /auth/login-url
+    P-->>N: 302 a Brightspace (state aleatorio en cookie)
+    N->>B: el usuario inicia sesión y da su consentimiento
+    B-->>N: 302 a /auth/callback?code=…&state=…
+    N->>P: GET /auth/callback
+    P->>B: canjea el code por access_token y refresh_token
+    P->>B: whoami y myenrollments
+    P->>G: PUT del usuario y de sus inscripciones
+    P->>B: carpetas de entrega de cada curso (dropbox)
+    P->>G: PUT de los talleres y de sus archivos
+    P->>G: POST session-tickets
+    G-->>P: ticket de un solo uso
+    P-->>N: 302 a EduTrace /api/auth/session?ticket=… (más las cookies de tokens)
