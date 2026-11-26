@@ -25,10 +25,8 @@ Grupo #4 · Proyecto de Innovación en TI · Pontificia Universidad Javeriana
 | Nombre | Aporte en este repositorio |
 | :--- | :--- |
 | Alejandro González Ochoa | Autor de este servicio (integración con Brightspace) · https://github.com/alejandrogonzalezo1055 |
-| César Santiago Canro Cabra | Equipo EduTrace |
 | Iván Santiago Lastra Romero | Equipo EduTrace |
 | Marlon Jhoan García Restrepo | Equipo EduTrace |
-| Samuel Iregui Franco | Equipo EduTrace |
 
 ---
 
